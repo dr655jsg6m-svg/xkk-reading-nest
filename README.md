@@ -1,4 +1,8 @@
-# S×S 小窝共读 / Reading Nest
+# xkk读到哪了 / Reading Nest
+
+小猫和哥哥的私人共读小窝。基于开源项目
+[`yueyue95/ss-reading-nest-open`](https://github.com/yueyue95/ss-reading-nest-open)
+二次定制，保留完整共读、进度同步与私人云端能力。
 
 一个移动端优先的 AI 共读小窝，运行在 ChatGPT Apps SDK + MCP 之上。用户可以导入自己的小说文本或漫画图片，记录自己和 AI 的阅读位置，并使用补课同步、轻量短评、书签、摘录与短评 Dock。
 
@@ -27,13 +31,13 @@
 - 轻松共读、吐槽、剧情猜测与深度分析模式
 - 书签、摘录、用户反应与短评 Dock
 - IndexedDB 本地阅读缓存
-- Cloudflare Worker、D1 与私有 R2 存储
+- Cloudflare Worker、D1 与免费私有 Workers KV 存储
 - iPad 移动端和沉浸阅读体验
 
 ## 项目结构
 
 ```text
-server/   TypeScript MCP server、Cloudflare Worker、D1/R2 adapters
+server/   TypeScript MCP server、Cloudflare Worker、D1/KV adapters
 web/      React + Vite ChatGPT widget
 shared/   共享数据模型、迁移和 Zod schemas
 demo/     可公开使用的原创示例内容
@@ -65,22 +69,22 @@ pnpm build
 ## Cloudflare 部署
 
 1. 复制 `.env.example`，只在本机或 Cloudflare 中填写真实值，不要提交。
-2. 创建自己的 D1 database 和私有 R2 bucket。
+2. 创建自己的 D1 database 和私有 Workers KV namespace。
 3. 将 `server/wrangler.jsonc` 中的 D1 database ID、资源名称改成自己的值。
 4. 为 Worker 设置随机且足够长的 `MCP_PATH_TOKEN` secret。
 5. 执行迁移、构建并部署。
 
 ```bash
 pnpm --filter @ss/server exec wrangler login
-pnpm --filter @ss/server exec wrangler d1 create ss-reading-nest-db
-pnpm --filter @ss/server exec wrangler r2 bucket create ss-reading-nest-sources
+pnpm --filter @ss/server exec wrangler d1 create xkk-reading-nest-db
+pnpm --filter @ss/server exec wrangler kv namespace create xkk-reading-nest-sources
 pnpm --filter @ss/server exec wrangler secret put MCP_PATH_TOKEN
-pnpm --filter @ss/server exec wrangler d1 migrations apply ss-reading-nest-db --remote
+pnpm --filter @ss/server exec wrangler d1 migrations apply xkk-reading-nest-db --remote
 pnpm build
 pnpm --filter @ss/server deploy
 ```
 
-R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部署完成后，使用你自己的 Worker 地址与私密 MCP path 在 ChatGPT Developer Mode 中添加 app。
+KV namespace 保持私有。项目不生成 public URL 或 signed URL，也不会公开正文。部署完成后，使用你自己的 Worker 地址与私密 MCP path 在 ChatGPT Developer Mode 中添加 app。
 
 ## 环境变量
 
@@ -91,7 +95,7 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID，仅用于部署或 smoke test |
 | `CLOUDFLARE_API_TOKEN` | 可选的自动化部署凭证 |
 | `D1_DATABASE_ID` | 你自己的 D1 database ID |
-| `R2_BUCKET_NAME` | 你自己的私有 R2 bucket 名称 |
+| `KV_NAMESPACE_ID` | 你自己的私有 Workers KV namespace ID |
 | `MCP_PATH_TOKEN` | Worker 私密 MCP/source 路径 token |
 | `WORKER_URL` | 已部署 Worker 的 HTTPS origin |
 | `SMOKE_D1_DATABASE_ID` | remote smoke 使用的 D1 database ID |
@@ -100,9 +104,9 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
 
 ## 数据与隐私
 
-- 使用者应自行部署并管理 D1、R2、Cloudflare secrets 与本地缓存。
+- 使用者应自行部署并管理 D1、Workers KV、Cloudflare secrets 与本地缓存。
 - 不要把私人聊天、日记、阅读记录、书签、摘录或用户上传源文件提交到仓库。
-- D1 只应保存 session、位置、偏好和 source metadata；小说正文与漫画图片存放在私有 R2，本地 IndexedDB 仅作设备缓存。
+- D1 只保存 session、位置、偏好和 source metadata；小说正文与漫画图片存放在私有 Workers KV，本地 IndexedDB 仅作设备缓存。
 - IndexedDB 是本设备加速缓存，不是跨设备的唯一长期存储。
 - 正文上传与恢复走 component-only 的组件与 Worker 受控路径，不应通过聊天消息返回整本内容。
 - ChatGPT 模型不会自动读取整本小说或整套漫画，只在用户主动触发时接收必要的当前阅读范围。
@@ -113,7 +117,7 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
 
 删除操作分为三层：删除云端阅读记录、同时删除云端正文副本、同时删除本设备正文缓存。使用者应根据自己的保留策略明确选择，不应把三者混为一次隐式删除。
 
-`server/scripts/remote-smoke/cloud-source-smoke.mjs` 可用于部署后验证。remote smoke 只使用临时原创内容，并会尽力清理测试 session 与 R2 objects；运行前必须通过本机环境变量提供自己的部署信息。
+`server/scripts/remote-smoke/cloud-source-smoke.mjs` 可用于部署后验证。remote smoke 只使用临时原创内容，并会尽力清理测试 session 与云端正文对象；运行前必须通过本机环境变量提供自己的部署信息。
 
 ## 二次开发
 

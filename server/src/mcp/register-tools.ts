@@ -45,7 +45,7 @@ const mutation = {
 
 export const TOOL_CONFIGS = {
   open_reading_nest: {
-    title: "打开 S×S 小窝共读",
+    title: "打开 xkk读到哪了",
     description: "Use this when the user wants to open the reading nest or continue recent reading.",
     inputSchema: openReadingNestInputSchema,
     annotations: readOnly,
@@ -69,7 +69,7 @@ export const TOOL_CONFIGS = {
     annotations: { ...mutation, idempotentHint: true }
   },
   confirm_assistant_synced_position: {
-    title: "确认烁构已读位置",
+    title: "确认哥哥已读位置",
     description:
       "Use this only after the user explicitly confirms that ChatGPT replied it has read through a batch end.",
     inputSchema: confirmAssistantSyncedPositionInputSchema,
@@ -98,7 +98,7 @@ export const TOOL_CONFIGS = {
   upload_cloud_source: {
     title: "Upload private cloud source",
     description:
-      "App-only bridge tool for uploading user-provided source bytes to private R2. Returns metadata only and never returns source text or image bytes.",
+      "App-only bridge tool for uploading user-provided source bytes to private Workers KV. Returns metadata only and never returns source text or image bytes.",
     inputSchema: uploadCloudSourceInputSchema,
     annotations: { ...mutation, idempotentHint: true },
     _meta: {
@@ -124,21 +124,21 @@ export const TOOL_CONFIGS = {
     annotations: { ...mutation, idempotentHint: true }
   },
   publish_companion_comment: {
-    title: "发布烁构陪读短评",
+    title: "发布哥哥陪读短评",
     description:
       "Use this before replying with a lightweight reading comment so the same short text appears in the reading Dock.",
     inputSchema: publishCompanionCommentInputSchema,
     annotations: { ...mutation, idempotentHint: true }
   },
   list_companion_comments: {
-    title: "读取烁构陪读短评",
+    title: "读取哥哥陪读短评",
     description:
       "Use this when the reading widget needs recent or paged historical companion comments for one session.",
     inputSchema: listCompanionCommentsInputSchema,
     annotations: readOnly
   },
   clear_companion_comments: {
-    title: "清除烁构陪读短评",
+    title: "清除哥哥陪读短评",
     description:
       "Use this when the user explicitly clears recent, historical, or all companion comments for one session.",
     inputSchema: clearCompanionCommentsInputSchema,
@@ -234,7 +234,7 @@ export function registerReadingTools(
         recentSessions: bookshelfSessions.slice(0, 10),
         ...(options.sourceEndpointBase ? { sourceEndpointBase: options.sourceEndpointBase } : {})
       },
-      "已打开 S×S 小窝共读。"
+      "已打开 xkk读到哪了。"
     );
   });
 
@@ -276,7 +276,7 @@ export function registerReadingTools(
           confirmedBatchId: input.batchId,
           updatedAt: session.updatedAt
         },
-        `已由用户确认烁构读到${input.confirmedPosition.label}。`
+        `已由用户确认哥哥读到${input.confirmedPosition.label}。`
       );
     }
   );
@@ -406,7 +406,7 @@ export function registerReadingTools(
     TOOL_CONFIGS.list_companion_comments,
     async (input) => {
       const result = await service.listCompanionComments(input);
-      return toolResult(result, "已读取这本书的烁构陪读短评。");
+      return toolResult(result, "已读取这本书的哥哥陪读短评。");
     }
   );
 

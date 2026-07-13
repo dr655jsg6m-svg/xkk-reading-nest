@@ -73,7 +73,8 @@ button:disabled { cursor: default; opacity: .42; }
   color: white;
   background: var(--wood);
   font-weight: 850;
-  letter-spacing: -.04em;
+  letter-spacing: -.02em;
+  text-transform: lowercase;
   box-shadow: var(--shadow);
 }
 h1, h2, h3, p { margin-top: 0; }

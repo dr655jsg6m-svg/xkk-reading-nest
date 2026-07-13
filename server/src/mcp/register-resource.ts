@@ -14,7 +14,7 @@ export function registerReadingResource(server: McpServer, widgetHtml: string, w
   };
   registerAppResource(
     server,
-    "S×S 小窝共读",
+    "xkk读到哪了",
     READING_NEST_URI,
     {
       description: "移动端优先的小说与漫画共读小窝",

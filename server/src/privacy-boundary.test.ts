@@ -188,7 +188,7 @@ describe("privacy boundary", () => {
     const readme = await readFile(new URL("../../README.md", import.meta.url), "utf8");
 
     expect(readme).toContain("v0.2.2");
-    expect(readme).toMatch(/R2[\s\S]*正文/);
+    expect(readme).toMatch(/Workers KV[\s\S]*正文/);
     expect(readme).toMatch(/D1[\s\S]*metadata/);
     expect(readme).toMatch(/IndexedDB[\s\S]*加速缓存/);
     expect(readme).toContain("component-only");
