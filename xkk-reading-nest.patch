@@ -1,0 +1,1176 @@
+diff --git a/.env.example b/.env.example
+index a22d019..131500e 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,7 +1,7 @@
+ CLOUDFLARE_ACCOUNT_ID=
+ CLOUDFLARE_API_TOKEN=
+ D1_DATABASE_ID=
+-R2_BUCKET_NAME=
++KV_NAMESPACE_ID=
+ MCP_PATH_TOKEN=
+ WORKER_URL=
+ SMOKE_D1_DATABASE_ID=
+diff --git a/README.md b/README.md
+index cc8eb0d..47b099c 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,8 @@
+-# S×S 小窝共读 / Reading Nest
++# xkk读到哪了 / Reading Nest
++
++小猫和哥哥的私人共读小窝。基于开源项目
++[`yueyue95/ss-reading-nest-open`](https://github.com/yueyue95/ss-reading-nest-open)
++二次定制，保留完整共读、进度同步与私人云端能力。
+ 
+ 一个移动端优先的 AI 共读小窝，运行在 ChatGPT Apps SDK + MCP 之上。用户可以导入自己的小说文本或漫画图片，记录自己和 AI 的阅读位置，并使用补课同步、轻量短评、书签、摘录与短评 Dock。
+ 
+@@ -27,13 +31,13 @@
+ - 轻松共读、吐槽、剧情猜测与深度分析模式
+ - 书签、摘录、用户反应与短评 Dock
+ - IndexedDB 本地阅读缓存
+-- Cloudflare Worker、D1 与私有 R2 存储
++- Cloudflare Worker、D1 与免费私有 Workers KV 存储
+ - iPad 移动端和沉浸阅读体验
+ 
+ ## 项目结构
+ 
+ ```text
+-server/   TypeScript MCP server、Cloudflare Worker、D1/R2 adapters
++server/   TypeScript MCP server、Cloudflare Worker、D1/KV adapters
+ web/      React + Vite ChatGPT widget
+ shared/   共享数据模型、迁移和 Zod schemas
+ demo/     可公开使用的原创示例内容
+@@ -65,22 +69,22 @@ pnpm build
+ ## Cloudflare 部署
+ 
+ 1. 复制 `.env.example`，只在本机或 Cloudflare 中填写真实值，不要提交。
+-2. 创建自己的 D1 database 和私有 R2 bucket。
++2. 创建自己的 D1 database 和私有 Workers KV namespace。
+ 3. 将 `server/wrangler.jsonc` 中的 D1 database ID、资源名称改成自己的值。
+ 4. 为 Worker 设置随机且足够长的 `MCP_PATH_TOKEN` secret。
+ 5. 执行迁移、构建并部署。
+ 
+ ```bash
+ pnpm --filter @ss/server exec wrangler login
+-pnpm --filter @ss/server exec wrangler d1 create ss-reading-nest-db
+-pnpm --filter @ss/server exec wrangler r2 bucket create ss-reading-nest-sources
++pnpm --filter @ss/server exec wrangler d1 create xkk-reading-nest-db
++pnpm --filter @ss/server exec wrangler kv namespace create xkk-reading-nest-sources
+ pnpm --filter @ss/server exec wrangler secret put MCP_PATH_TOKEN
+-pnpm --filter @ss/server exec wrangler d1 migrations apply ss-reading-nest-db --remote
++pnpm --filter @ss/server exec wrangler d1 migrations apply xkk-reading-nest-db --remote
+ pnpm build
+ pnpm --filter @ss/server deploy
+ ```
+ 
+-R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部署完成后，使用你自己的 Worker 地址与私密 MCP path 在 ChatGPT Developer Mode 中添加 app。
++KV namespace 保持私有。项目不生成 public URL 或 signed URL，也不会公开正文。部署完成后，使用你自己的 Worker 地址与私密 MCP path 在 ChatGPT Developer Mode 中添加 app。
+ 
+ ## 环境变量
+ 
+@@ -91,7 +95,7 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
+ | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID，仅用于部署或 smoke test |
+ | `CLOUDFLARE_API_TOKEN` | 可选的自动化部署凭证 |
+ | `D1_DATABASE_ID` | 你自己的 D1 database ID |
+-| `R2_BUCKET_NAME` | 你自己的私有 R2 bucket 名称 |
++| `KV_NAMESPACE_ID` | 你自己的私有 Workers KV namespace ID |
+ | `MCP_PATH_TOKEN` | Worker 私密 MCP/source 路径 token |
+ | `WORKER_URL` | 已部署 Worker 的 HTTPS origin |
+ | `SMOKE_D1_DATABASE_ID` | remote smoke 使用的 D1 database ID |
+@@ -100,9 +104,9 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
+ 
+ ## 数据与隐私
+ 
+-- 使用者应自行部署并管理 D1、R2、Cloudflare secrets 与本地缓存。
++- 使用者应自行部署并管理 D1、Workers KV、Cloudflare secrets 与本地缓存。
+ - 不要把私人聊天、日记、阅读记录、书签、摘录或用户上传源文件提交到仓库。
+-- D1 只应保存 session、位置、偏好和 source metadata；小说正文与漫画图片存放在私有 R2，本地 IndexedDB 仅作设备缓存。
++- D1 只保存 session、位置、偏好和 source metadata；小说正文与漫画图片存放在私有 Workers KV，本地 IndexedDB 仅作设备缓存。
+ - IndexedDB 是本设备加速缓存，不是跨设备的唯一长期存储。
+ - 正文上传与恢复走 component-only 的组件与 Worker 受控路径，不应通过聊天消息返回整本内容。
+ - ChatGPT 模型不会自动读取整本小说或整套漫画，只在用户主动触发时接收必要的当前阅读范围。
+@@ -113,7 +117,7 @@ R2 bucket 必须保持 private。项目不生成 public URL 或 signed URL。部
+ 
+ 删除操作分为三层：删除云端阅读记录、同时删除云端正文副本、同时删除本设备正文缓存。使用者应根据自己的保留策略明确选择，不应把三者混为一次隐式删除。
+ 
+-`server/scripts/remote-smoke/cloud-source-smoke.mjs` 可用于部署后验证。remote smoke 只使用临时原创内容，并会尽力清理测试 session 与 R2 objects；运行前必须通过本机环境变量提供自己的部署信息。
++`server/scripts/remote-smoke/cloud-source-smoke.mjs` 可用于部署后验证。remote smoke 只使用临时原创内容，并会尽力清理测试 session 与云端正文对象；运行前必须通过本机环境变量提供自己的部署信息。
+ 
+ ## 二次开发
+ 
+diff --git a/package.json b/package.json
+index 646f3e6..2599fa9 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "ss-reading-nest",
++  "name": "xkk-reading-nest",
+   "private": true,
+   "version": "0.2.1",
+   "packageManager": "pnpm@10.15.1",
+diff --git a/server/src/app.test.ts b/server/src/app.test.ts
+index efcf036..1f18d3e 100644
+--- a/server/src/app.test.ts
++++ b/server/src/app.test.ts
+@@ -6,7 +6,7 @@ describe("server app", () => {
+   it("reports health without requiring an API key", async () => {
+     const response = await request(createApp()).get("/health");
+     expect(response.status).toBe(200);
+-    expect(response.body).toEqual({ ok: true, app: "S×S 小窝共读", version: "0.2.1" });
++    expect(response.body).toEqual({ ok: true, app: "xkk读到哪了", version: "0.2.1" });
+   });
+ 
+   it("accepts an MCP initialize request", async () => {
+diff --git a/server/src/app.ts b/server/src/app.ts
+index f0f77f2..aa80d53 100644
+--- a/server/src/app.ts
++++ b/server/src/app.ts
+@@ -12,7 +12,7 @@ export function createApp() {
+   const transports: TransportMap = {};
+ 
+   app.get("/health", (_request, response) => {
+-    response.json({ ok: true, app: "S×S 小窝共读", version: "0.2.1" });
++    response.json({ ok: true, app: "xkk读到哪了", version: "0.2.1" });
+   });
+ 
+   app.post("/mcp", async (request: Request, response: Response) => {
+diff --git a/server/src/index.ts b/server/src/index.ts
+index ec6dea7..a5fd60b 100644
+--- a/server/src/index.ts
++++ b/server/src/index.ts
+@@ -2,5 +2,5 @@ import { createApp } from "./app.js";
+ 
+ const port = Number(process.env.PORT ?? 8787);
+ createApp().listen(port, () => {
+-  console.log(`S×S 小窝共读 MCP server: http://localhost:${port}/mcp`);
++  console.log(`xkk读到哪了 MCP server: http://localhost:${port}/mcp`);
+ });
+diff --git a/server/src/mcp/register-resource.ts b/server/src/mcp/register-resource.ts
+index 25b3a94..97a6cb9 100644
+--- a/server/src/mcp/register-resource.ts
++++ b/server/src/mcp/register-resource.ts
+@@ -14,7 +14,7 @@ export function registerReadingResource(server: McpServer, widgetHtml: string, w
+   };
+   registerAppResource(
+     server,
+-    "S×S 小窝共读",
++    "xkk读到哪了",
+     READING_NEST_URI,
+     {
+       description: "移动端优先的小说与漫画共读小窝",
+diff --git a/server/src/mcp/register-tools.ts b/server/src/mcp/register-tools.ts
+index 62c8788..0152887 100644
+--- a/server/src/mcp/register-tools.ts
++++ b/server/src/mcp/register-tools.ts
+@@ -45,7 +45,7 @@ const mutation = {
+ 
+ export const TOOL_CONFIGS = {
+   open_reading_nest: {
+-    title: "打开 S×S 小窝共读",
++    title: "打开 xkk读到哪了",
+     description: "Use this when the user wants to open the reading nest or continue recent reading.",
+     inputSchema: openReadingNestInputSchema,
+     annotations: readOnly,
+@@ -69,7 +69,7 @@ export const TOOL_CONFIGS = {
+     annotations: { ...mutation, idempotentHint: true }
+   },
+   confirm_assistant_synced_position: {
+-    title: "确认烁构已读位置",
++    title: "确认哥哥已读位置",
+     description:
+       "Use this only after the user explicitly confirms that ChatGPT replied it has read through a batch end.",
+     inputSchema: confirmAssistantSyncedPositionInputSchema,
+@@ -98,7 +98,7 @@ export const TOOL_CONFIGS = {
+   upload_cloud_source: {
+     title: "Upload private cloud source",
+     description:
+-      "App-only bridge tool for uploading user-provided source bytes to private R2. Returns metadata only and never returns source text or image bytes.",
++      "App-only bridge tool for uploading user-provided source bytes to private Workers KV. Returns metadata only and never returns source text or image bytes.",
+     inputSchema: uploadCloudSourceInputSchema,
+     annotations: { ...mutation, idempotentHint: true },
+     _meta: {
+@@ -124,21 +124,21 @@ export const TOOL_CONFIGS = {
+     annotations: { ...mutation, idempotentHint: true }
+   },
+   publish_companion_comment: {
+-    title: "发布烁构陪读短评",
++    title: "发布哥哥陪读短评",
+     description:
+       "Use this before replying with a lightweight reading comment so the same short text appears in the reading Dock.",
+     inputSchema: publishCompanionCommentInputSchema,
+     annotations: { ...mutation, idempotentHint: true }
+   },
+   list_companion_comments: {
+-    title: "读取烁构陪读短评",
++    title: "读取哥哥陪读短评",
+     description:
+       "Use this when the reading widget needs recent or paged historical companion comments for one session.",
+     inputSchema: listCompanionCommentsInputSchema,
+     annotations: readOnly
+   },
+   clear_companion_comments: {
+-    title: "清除烁构陪读短评",
++    title: "清除哥哥陪读短评",
+     description:
+       "Use this when the user explicitly clears recent, historical, or all companion comments for one session.",
+     inputSchema: clearCompanionCommentsInputSchema,
+@@ -234,7 +234,7 @@ export function registerReadingTools(
+         recentSessions: bookshelfSessions.slice(0, 10),
+         ...(options.sourceEndpointBase ? { sourceEndpointBase: options.sourceEndpointBase } : {})
+       },
+-      "已打开 S×S 小窝共读。"
++      "已打开 xkk读到哪了。"
+     );
+   });
+ 
+@@ -276,7 +276,7 @@ export function registerReadingTools(
+           confirmedBatchId: input.batchId,
+           updatedAt: session.updatedAt
+         },
+-        `已由用户确认烁构读到${input.confirmedPosition.label}。`
++        `已由用户确认哥哥读到${input.confirmedPosition.label}。`
+       );
+     }
+   );
+@@ -406,7 +406,7 @@ export function registerReadingTools(
+     TOOL_CONFIGS.list_companion_comments,
+     async (input) => {
+       const result = await service.listCompanionComments(input);
+-      return toolResult(result, "已读取这本书的烁构陪读短评。");
++      return toolResult(result, "已读取这本书的哥哥陪读短评。");
+     }
+   );
+ 
+diff --git a/server/src/mcp/server-factory.ts b/server/src/mcp/server-factory.ts
+index 4f18bab..e41c7c4 100644
+--- a/server/src/mcp/server-factory.ts
++++ b/server/src/mcp/server-factory.ts
+@@ -12,7 +12,7 @@ export function createMcpServerFromRepository(
+   options: { sourceEndpointBase?: string; workerOrigin?: string } = {}
+ ) {
+   const server = new McpServer({
+-    name: "S×S 小窝共读",
++    name: "xkk读到哪了",
+     version: "0.2.1"
+   });
+   const service = new ReadingService(repository);
+diff --git a/server/src/privacy-boundary.test.ts b/server/src/privacy-boundary.test.ts
+index eb0ba25..24fbe57 100644
+--- a/server/src/privacy-boundary.test.ts
++++ b/server/src/privacy-boundary.test.ts
+@@ -188,7 +188,7 @@ describe("privacy boundary", () => {
+     const readme = await readFile(new URL("../../README.md", import.meta.url), "utf8");
+ 
+     expect(readme).toContain("v0.2.2");
+-    expect(readme).toMatch(/R2[\s\S]*正文/);
++    expect(readme).toMatch(/Workers KV[\s\S]*正文/);
+     expect(readme).toMatch(/D1[\s\S]*metadata/);
+     expect(readme).toMatch(/IndexedDB[\s\S]*加速缓存/);
+     expect(readme).toContain("component-only");
+diff --git a/server/src/services/reading-service.ts b/server/src/services/reading-service.ts
+index 31d1741..11983d6 100644
+--- a/server/src/services/reading-service.ts
++++ b/server/src/services/reading-service.ts
+@@ -130,13 +130,13 @@ export class ReadingService {
+         throw new AppError("INVALID_OPERATION", "确认位置类型与当前阅读位置不一致。");
+       }
+       if (input.confirmedPosition.index > session.userCurrentPosition.index) {
+-        throw new AppError("INVALID_OPERATION", "不能确认烁构读到了用户尚未读到的位置。");
++        throw new AppError("INVALID_OPERATION", "不能确认哥哥读到了用户尚未读到的位置。");
+       }
+       if (
+         session.assistantSyncedPosition &&
+         input.confirmedPosition.index < session.assistantSyncedPosition.index
+       ) {
+-        throw new AppError("INVALID_OPERATION", "烁构确认位置不能倒退。");
++        throw new AppError("INVALID_OPERATION", "哥哥确认位置不能倒退。");
+       }
+       const now = this.deps.now().toISOString();
+       session.assistantSyncedPosition = input.confirmedPosition;
+diff --git a/server/src/storage/kv-source-object-storage.ts b/server/src/storage/kv-source-object-storage.ts
+new file mode 100644
+index 0000000..d77f95f
+--- /dev/null
++++ b/server/src/storage/kv-source-object-storage.ts
+@@ -0,0 +1,74 @@
++import {
++  SourceObjectNotFoundError,
++  sourceBytesToArrayBuffer,
++  type SourceObjectStorage
++} from "./source-object-storage.js";
++
++type KvObjectMetadata = {
++  contentType?: string;
++  sizeBytes: number;
++  customMetadata?: Record<string, string>;
++};
++
++/** Private source storage for the personal deployment. */
++export class KvSourceObjectStorage implements SourceObjectStorage {
++  constructor(private readonly namespace: KVNamespace) {}
++
++  async putObject(input: {
++    key: string;
++    bytes: Uint8Array | ArrayBuffer | Blob;
++    contentType?: string;
++    metadata?: Record<string, string>;
++  }): Promise<{ key: string; sizeBytes: number }> {
++    const bytes = await sourceBytesToArrayBuffer(input.bytes);
++    const metadata: KvObjectMetadata = {
++      sizeBytes: bytes.byteLength,
++      ...(input.contentType ? { contentType: input.contentType } : {}),
++      ...(input.metadata ? { customMetadata: input.metadata } : {})
++    };
++    await this.namespace.put(input.key, bytes, { metadata });
++    return { key: input.key, sizeBytes: bytes.byteLength };
++  }
++
++  async getObject(key: string): Promise<{
++    bytes: ArrayBuffer;
++    contentType?: string;
++    sizeBytes?: number;
++  }> {
++    const object = await this.namespace.getWithMetadata<KvObjectMetadata>(key, {
++      type: "arrayBuffer"
++    });
++    if (!object.value) throw new SourceObjectNotFoundError(key);
++    return {
++      bytes: object.value,
++      ...(object.metadata?.contentType
++        ? { contentType: object.metadata.contentType }
++        : {}),
++      sizeBytes: object.metadata?.sizeBytes ?? object.value.byteLength
++    };
++  }
++
++  async headObject(key: string): Promise<{
++    exists: boolean;
++    contentType?: string;
++    sizeBytes?: number;
++  }> {
++    const object = await this.namespace.getWithMetadata<KvObjectMetadata>(key, {
++      type: "arrayBuffer"
++    });
++    if (!object.value) return { exists: false };
++    return {
++      exists: true,
++      ...(object.metadata?.contentType
++        ? { contentType: object.metadata.contentType }
++        : {}),
++      sizeBytes: object.metadata?.sizeBytes ?? object.value.byteLength
++    };
++  }
++
++  async deleteObject(key: string): Promise<{ deleted: boolean }> {
++    const exists = (await this.namespace.get(key, "arrayBuffer")) !== null;
++    if (exists) await this.namespace.delete(key);
++    return { deleted: exists };
++  }
++}
+diff --git a/server/src/worker.ts b/server/src/worker.ts
+index d3e23b6..3c2a01e 100644
+--- a/server/src/worker.ts
++++ b/server/src/worker.ts
+@@ -4,7 +4,7 @@ import { createMcpServerFromRepository } from "./mcp/server-factory.js";
+ import { D1ReadingRepository } from "./repositories/d1-reading-repository.js";
+ import { CloudSourceService } from "./services/cloud-source-service.js";
+ import { handleSourceRoute } from "./source-routes.js";
+-import { R2SourceObjectStorage } from "./storage/r2-source-object-storage.js";
++import { KvSourceObjectStorage } from "./storage/kv-source-object-storage.js";
+ import { getWorkerRoute } from "./worker-router.js";
+ 
+ export default {
+@@ -13,7 +13,7 @@ export default {
+     const route = getWorkerRoute(url, env.MCP_PATH_TOKEN);
+ 
+     if (route === "health") {
+-      return Response.json({ ok: true, app: "S×S 小窝共读", version: "0.2.1" });
++      return Response.json({ ok: true, app: "xkk读到哪了", version: "0.2.1" });
+     }
+     if (route === "misconfigured") {
+       console.error(JSON.stringify({ message: "MCP_PATH_TOKEN is not configured" }));
+@@ -25,7 +25,7 @@ export default {
+ 
+     try {
+       const repository = new D1ReadingRepository(env.DB);
+-      const sourceStorage = new R2SourceObjectStorage(env.SOURCES_BUCKET);
++      const sourceStorage = new KvSourceObjectStorage(env.SOURCES_KV);
+       const sourceService = new CloudSourceService(repository, sourceStorage);
+       if (route === "source") {
+         return handleSourceRoute(request, sourceService);
+diff --git a/server/worker-configuration.d.ts b/server/worker-configuration.d.ts
+index 834b589..3034b6c 100644
+--- a/server/worker-configuration.d.ts
++++ b/server/worker-configuration.d.ts
+@@ -4,7 +4,7 @@
+ interface __BaseEnv_Env {
+ 	DB: D1Database;
+ 	MCP_PATH_TOKEN: string;
+-	SOURCES_BUCKET: R2Bucket;
++	SOURCES_KV: KVNamespace;
+ }
+ declare namespace Cloudflare {
+ 	interface GlobalProps {
+diff --git a/server/wrangler.jsonc b/server/wrangler.jsonc
+index 25c351c..5dfac11 100644
+--- a/server/wrangler.jsonc
++++ b/server/wrangler.jsonc
+@@ -1,6 +1,6 @@
+ {
+   "$schema": "./node_modules/wrangler/config-schema.json",
+-  "name": "ss-reading-nest",
++  "name": "xkk-reading-nest",
+   "main": "src/worker.ts",
+   "compatibility_date": "2026-06-22",
+   "compatibility_flags": ["nodejs_compat"],
+@@ -12,15 +12,15 @@
+   "d1_databases": [
+     {
+       "binding": "DB",
+-      "database_name": "ss-reading-nest-db",
+-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
++      "database_name": "xkk-reading-nest-db",
++      "database_id": "08167015-14f2-49dd-9981-4cb88364e859",
+       "migrations_dir": "./migrations"
+     }
+   ],
+-  "r2_buckets": [
++  "kv_namespaces": [
+     {
+-      "binding": "SOURCES_BUCKET",
+-      "bucket_name": "ss-reading-nest-sources"
++      "binding": "SOURCES_KV",
++      "id": "901d1004a2774979af989be5ae5b76db"
+     }
+   ],
+   "rules": [
+diff --git a/web/index.html b/web/index.html
+index e29d005..403b4fa 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -3,8 +3,8 @@
+   <head>
+     <meta charset="UTF-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='18' fill='%236f5148'/><text x='32' y='40' text-anchor='middle' font-size='23' fill='white'>S×S</text></svg>" />
+-    <title>S×S 小窝共读</title>
++    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='18' fill='%236f5148'/><text x='32' y='40' text-anchor='middle' font-size='22' fill='white'>xkk</text></svg>" />
++    <title>xkk读到哪了</title>
+   </head>
+   <body>
+     <div id="root">
+@@ -12,7 +12,7 @@
+         data-startup-fallback
+         style="min-height:100vh;padding:24px;background:#211c1a;color:#f3ece8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+       >
+-        <strong>SxS reading nest startup</strong>
++        <strong>xkk reading nest startup</strong>
+         <p style="max-width:36rem;line-height:1.6">
+           If this message stays visible, the app shell loaded but JavaScript did not finish mounting.
+           Please refresh the widget or reopen ChatGPT, then send this startup panel to Codex.
+diff --git a/web/src/App.test.tsx b/web/src/App.test.tsx
+index 63c0da5..515cdc7 100644
+--- a/web/src/App.test.tsx
++++ b/web/src/App.test.tsx
+@@ -26,7 +26,7 @@ describe("App", () => {
+ 
+   it("shows the two reading modes and bookshelf section", () => {
+     render(<App />);
+-    expect(screen.getByText("S×S 小窝共读")).toBeInTheDocument();
++    expect(screen.getByText("xkk读到哪了")).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: /小说共读/ })).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: /漫画共读/ })).toBeInTheDocument();
+     expect(screen.getByText("我的书架")).toBeInTheDocument();
+@@ -652,7 +652,7 @@ describe("App", () => {
+       }
+     });
+     fireEvent.click(screen.getByRole("button", { name: "进入阅读小窝" }));
+-    await screen.findByText(/烁构确认读到：尚未同步/);
++    await screen.findByText(/哥哥确认读到：尚未同步/);
+ 
+     for (let index = 0; index < 27; index += 1) {
+       fireEvent.click(screen.getByRole("button", { name: "下一段" }));
+@@ -668,7 +668,7 @@ describe("App", () => {
+ 
+     fireEvent.click(screen.getByRole("button", { name: /完整补课后再陪读/ }));
+     const confirmButton = await screen.findByRole("button", {
+-      name: /我看到烁构回复“已读到第 28 段”，开始正式陪读/
++      name: /我看到哥哥回复“已读到第 28 段”，开始正式陪读/
+     });
+     expect(callTool).not.toHaveBeenCalledWith(
+       "confirm_assistant_synced_position",
+@@ -774,8 +774,8 @@ describe("App", () => {
+     await waitFor(() => expect(sendFollowUpMessage).toHaveBeenCalledTimes(2));
+     expect(String(sendFollowUpMessage.mock.calls[1]?.[0]?.prompt)).toContain("补课已确认完成");
+     expect(String(sendFollowUpMessage.mock.calls[1]?.[0]?.prompt)).not.toContain("只简短回复");
+-    expect(screen.queryByText("烁构补课中")).not.toBeInTheDocument();
+-    expect(await screen.findByRole("button", { name: "保存烁构短评" })).toBeInTheDocument();
++    expect(screen.queryByText("哥哥补课中")).not.toBeInTheDocument();
++    expect(await screen.findByRole("button", { name: "保存哥哥短评" })).toBeInTheDocument();
+ 
+     await deviceCache.remove("sequence-session");
+   });
+@@ -861,13 +861,13 @@ describe("App", () => {
+       expect(screen.getByRole("button", { name: "长评" })).toBeEnabled();
+     });
+ 
+-    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" }));
++    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" }));
+     await waitFor(() => {
+       expect(callTool).toHaveBeenCalledWith("update_session_preferences", {
+         sessionId: "session-preferences",
+         preferences: { autoSaveCompanionComments: false }
+       });
+-      expect(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" })).not.toBeChecked();
++      expect(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" })).not.toBeChecked();
+     });
+ 
+     fireEvent.click(screen.getByRole("button", { name: "立即吐槽" }));
+@@ -1108,11 +1108,11 @@ describe("App", () => {
+     fireEvent.click(screen.getByRole("button", { name: /小说共读/ }));
+     fireEvent.change(screen.getByLabelText("作品名"), { target: { value: "短评保存测试" } });
+     fireEvent.change(screen.getByPlaceholderText("粘贴 TXT 或 Markdown 文本"), {
+-      target: { value: "这段需要烁构吐槽一下。" }
++      target: { value: "这段需要哥哥吐槽一下。" }
+     });
+     fireEvent.click(screen.getByRole("button", { name: "进入阅读小窝" }));
+     await screen.findByRole("button", { name: "陪我看看这里" });
+-    expect(await screen.findByRole("button", { name: "保存烁构短评" })).toBeInTheDocument();
++    expect(await screen.findByRole("button", { name: "保存哥哥短评" })).toBeInTheDocument();
+     fireEvent.click(screen.getByRole("button", { name: "全屏阅读" }));
+     expect(await screen.findByRole("button", { name: "退出全屏" })).toBeInTheDocument();
+ 
+@@ -1123,11 +1123,11 @@ describe("App", () => {
+       expect.anything()
+     );
+ 
+-    fireEvent.click(await screen.findByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(await screen.findByRole("button", { name: "保存哥哥短评" }));
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "这句吐槽值得贴到小窝。" }
+     });
+-    fireEvent.click(screen.getByRole("button", { name: "收入烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "收入哥哥短评" }));
+ 
+     await waitFor(() => {
+       expect(callTool).toHaveBeenCalledWith(
+@@ -1143,11 +1143,11 @@ describe("App", () => {
+     expect(await screen.findByText("这句吐槽值得贴到小窝。")).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: "退出全屏" })).toBeInTheDocument();
+     expect(screen.getByLabelText("短评内容")).toHaveValue("");
+-    expect(screen.getByRole("button", { name: "收入烁构短评" })).toBeInTheDocument();
++    expect(screen.getByRole("button", { name: "收入哥哥短评" })).toBeInTheDocument();
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "这句吐槽值得贴到小窝。" }
+     });
+-    fireEvent.click(screen.getByRole("button", { name: "收入烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "收入哥哥短评" }));
+     await waitFor(() => {
+       expect(
+         callTool.mock.calls.filter(([name]) => name === "publish_companion_comment")
+@@ -1157,7 +1157,7 @@ describe("App", () => {
+ 
+     fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
+     fireEvent.click(await screen.findByRole("button", { name: "管理《短评保存测试》" }));
+-    fireEvent.click(await screen.findByRole("button", { name: "烁构评论" }));
++    fireEvent.click(await screen.findByRole("button", { name: "哥哥评论" }));
+     expect(screen.getByText("这句吐槽值得贴到小窝。")).toBeInTheDocument();
+   });
+ 
+@@ -1477,7 +1477,7 @@ describe("App", () => {
+                 position: { kind: "paragraph", index: 8, label: "第 8 段" },
+                 mode: "light_chat",
+                 length: "normal",
+-                text: "烁构已经追到第八段啦，这里可以接着聊。",
++                text: "哥哥已经追到第八段啦，这里可以接着聊。",
+                 source: "catch_up_complete",
+                 inRecent: true,
+                 inHistory: true,
+@@ -1504,7 +1504,7 @@ describe("App", () => {
+     fireEvent.click(await screen.findByRole("button", { name: "继续阅读《Reader Comment Book》" }));
+ 
+     expect(await screen.findByText("用户读到：第 3 段")).toBeInTheDocument();
+-    expect(await screen.findByText("烁构已经追到第八段啦，这里可以接着聊。")).toBeInTheDocument();
++    expect(await screen.findByText("哥哥已经追到第八段啦，这里可以接着聊。")).toBeInTheDocument();
+     expect(screen.getByText("第 8 段")).toBeInTheDocument();
+     await deviceCache.remove("reader-comment-session");
+   });
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index e8a69c5..974b1f3 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -540,7 +540,7 @@ export function App() {
+         result.structuredContent?.nextCursor as string | undefined
+       );
+     } catch {
+-      setToast("烁构评论历史暂时没有读取成功。");
++      setToast("哥哥评论历史暂时没有读取成功。");
+     } finally {
+       setHistoryLoading(false);
+     }
+@@ -1118,7 +1118,7 @@ export function App() {
+       });
+       setToast(
+         mode === "context"
+-          ? `已同步${sessionBundle.session.userCurrentPosition.label}，烁构正在看这里。`
++          ? `已同步${sessionBundle.session.userCurrentPosition.label}，哥哥正在看这里。`
+           : "已用兼容模式发送当前段落。"
+       );
+     } finally {
+@@ -1132,7 +1132,7 @@ export function App() {
+     const userIndex = sessionBundle.session.userCurrentPosition.index;
+     const assistantIndex = sessionBundle.session.assistantSyncedPosition?.index ?? 0;
+     if (userIndex <= assistantIndex) {
+-      setToast("烁构已经看到这里啦，正在换个角度陪你看。");
++      setToast("哥哥已经看到这里啦，正在换个角度陪你看。");
+       await lookAtNovel(currentText, selectedText);
+       return;
+     }
+@@ -1349,7 +1349,7 @@ export function App() {
+       if (confirmed.mode === "live_reading") {
+         clearSyncJobState();
+         await cache.removeSyncJob(syncJob.sessionId).catch(() => undefined);
+-        setToast(`已确认烁构读到第 ${batch.rangeEnd} 段。`);
++        setToast(`已确认哥哥读到第 ${batch.rangeEnd} 段。`);
+         return;
+       }
+       const formalMode = sessionBundle.session.sessionPreferences.readingCommentMode;
+@@ -1390,7 +1390,7 @@ export function App() {
+       });
+       clearSyncJobState();
+       await cache.removeSyncJob(syncJob.sessionId).catch(() => undefined);
+-      setToast("烁构追上你啦，可以正式陪读了。");
++      setToast("哥哥追上你啦，可以正式陪读了。");
+       return;
+     }
+     storeSyncJob(confirmed);
+@@ -2075,15 +2075,15 @@ export function App() {
+           <label className="remember-row"><input type="checkbox" checked={remembered} onChange={(e) => setRemembered(e.target.checked)} />在本设备记住{setupType === "novel" ? "这本书" : "这部漫画"}</label>
+           <p className="privacy-note">正文/图片只保存在本设备，用于下次继续阅读；服务器不会保存全文或漫画原图。</p>
+           {existingSession ? (
+-            <section className="setup-companion-summary" aria-label="烁构最近短评">
++            <section className="setup-companion-summary" aria-label="哥哥最近短评">
+               <div>
+-                <strong>烁构最近短评</strong>
++                <strong>哥哥最近短评</strong>
+                 <span>重新导入正文后，陪读 Dock 会继续显示这些短评。</span>
+               </div>
+-              {companionLoading ? <p>正在看看烁构留下了什么……</p> : null}
++              {companionLoading ? <p>正在看看哥哥留下了什么……</p> : null}
+               {!companionLoading && companionError ? <p>{companionError}</p> : null}
+               {!companionLoading && !companionError && companionComments.length === 0 ? (
+-                <p>烁构还没留下短评。</p>
++                <p>哥哥还没留下短评。</p>
+               ) : null}
+               {!companionLoading && !companionError
+                 ? companionComments.slice(0, 3).map((comment) => (
+diff --git a/web/src/Boot.test.tsx b/web/src/Boot.test.tsx
+index ff213ca..661dae5 100644
+--- a/web/src/Boot.test.tsx
++++ b/web/src/Boot.test.tsx
+@@ -9,7 +9,7 @@ describe("Boot", () => {
+   it("shows a visible diagnostic while the app module is loading", () => {
+     render(<Boot loadApp={() => new Promise(() => undefined)} />);
+ 
+-    expect(screen.getByText("SxS 小窝加载诊断")).toBeInTheDocument();
++    expect(screen.getByText("xkk 阅读小窝加载诊断")).toBeInTheDocument();
+     expect(screen.getByText("loading-app")).toBeInTheDocument();
+   });
+ 
+diff --git a/web/src/Boot.tsx b/web/src/Boot.tsx
+index 768ef68..4f22b83 100644
+--- a/web/src/Boot.tsx
++++ b/web/src/Boot.tsx
+@@ -103,7 +103,7 @@ class BootErrorBoundary extends Component<BoundaryProps, BoundaryState> {
+   }
+ 
+   componentDidCatch(error: unknown, _info: ErrorInfo) {
+-    console.error("SxS reading nest boot failed", sanitizeErrorMessage(error));
++    console.error("xkk reading nest boot failed", sanitizeErrorMessage(error));
+   }
+ 
+   render() {
+@@ -134,7 +134,7 @@ export function BootDiagnostics({
+ 
+   return (
+     <main className="boot-diagnostics" role="alert" aria-live="polite">
+-      <strong>SxS 小窝加载诊断</strong>
++      <strong>xkk 阅读小窝加载诊断</strong>
+       <p>组件还没有正常显示。请刷新小窝；如果仍是空白，把这块信息截图给 Codex。</p>
+       <dl>
+         <div>
+diff --git a/web/src/bridge/host.ts b/web/src/bridge/host.ts
+index cdb26c6..db491ed 100644
+--- a/web/src/bridge/host.ts
++++ b/web/src/bridge/host.ts
+@@ -24,7 +24,7 @@ export interface ReadingHostContext {
+ function connectApp() {
+   if (typeof window === "undefined" || window.parent === window) return undefined;
+   if (!app) {
+-    app = new McpApp({ name: "S×S 小窝共读", version: "0.2.1" });
++    app = new McpApp({ name: "xkk读到哪了", version: "0.2.1" });
+     appReady = app.connect().catch(() => undefined);
+   }
+   return app;
+diff --git a/web/src/components/BookManagementSheet.test.tsx b/web/src/components/BookManagementSheet.test.tsx
+index 7c5b31d..6a858a5 100644
+--- a/web/src/components/BookManagementSheet.test.tsx
++++ b/web/src/components/BookManagementSheet.test.tsx
+@@ -54,7 +54,7 @@ describe("BookManagementSheet", () => {
+     expect(screen.getAllByText("用户反应")).toHaveLength(2);
+     fireEvent.click(screen.getByRole("button", { name: "书签" }));
+     expect(screen.getByText("书签标签")).toBeInTheDocument();
+-    fireEvent.click(screen.getByRole("button", { name: "烁构评论" }));
++    fireEvent.click(screen.getByRole("button", { name: "哥哥评论" }));
+     expect(screen.getByText("历史短评")).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: "加载更多评论" })).toBeInTheDocument();
+   });
+diff --git a/web/src/components/BookManagementSheet.tsx b/web/src/components/BookManagementSheet.tsx
+index 56f59d9..fd790b4 100644
+--- a/web/src/components/BookManagementSheet.tsx
++++ b/web/src/components/BookManagementSheet.tsx
+@@ -71,7 +71,7 @@ export function BookManagementSheet(props: {
+             <button aria-pressed={tab === "bookmarks"} onClick={() => setTab("bookmarks")}>书签</button>
+             <button aria-pressed={tab === "quotes"} onClick={() => setTab("quotes")}>摘录</button>
+             <button aria-pressed={tab === "reactions"} onClick={() => setTab("reactions")}>用户反应</button>
+-            <button aria-pressed={tab === "comments"} onClick={() => setTab("comments")}>烁构评论</button>
++            <button aria-pressed={tab === "comments"} onClick={() => setTab("comments")}>哥哥评论</button>
+           </div>
+           <div className="record-list">
+             {tab === "bookmarks"
+diff --git a/web/src/components/CompanionDock.test.tsx b/web/src/components/CompanionDock.test.tsx
+index 589531b..6cdd822 100644
+--- a/web/src/components/CompanionDock.test.tsx
++++ b/web/src/components/CompanionDock.test.tsx
+@@ -141,8 +141,8 @@ describe("CompanionDock", () => {
+     fireEvent.click(screen.getByRole("button", { name: /第 4 段.*第四段短评/ }));
+     expect(onJump).toHaveBeenCalledWith(4);
+     fireEvent.click(screen.getByRole("button", { name: "收起陪读 Dock" }));
+-    expect(screen.getByRole("button", { name: "烁构陪读" })).toBeInTheDocument();
+-    fireEvent.click(screen.getByRole("button", { name: "烁构陪读" }));
++    expect(screen.getByRole("button", { name: "哥哥陪读" })).toBeInTheDocument();
++    fireEvent.click(screen.getByRole("button", { name: "哥哥陪读" }));
+     fireEvent.click(screen.getByRole("button", { name: "清除最近短评" }));
+     expect(onClear).toHaveBeenCalledTimes(1);
+ 
+@@ -155,7 +155,7 @@ describe("CompanionDock", () => {
+         onJump={onJump}
+       />
+     );
+-    expect(screen.getByText("烁构还没留下短评。")).toBeInTheDocument();
++    expect(screen.getByText("哥哥还没留下短评。")).toBeInTheDocument();
+ 
+     rerender(
+       <CompanionDock
+@@ -221,11 +221,11 @@ describe("CompanionDock", () => {
+       />
+     );
+ 
+-    fireEvent.click(screen.getByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "保存哥哥短评" }));
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "这句吐槽值得留下。" }
+     });
+-    fireEvent.click(screen.getByRole("button", { name: "收入烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "收入哥哥短评" }));
+ 
+     expect(onSavePendingComment).toHaveBeenCalledWith("这句吐槽值得留下。");
+   });
+@@ -250,11 +250,11 @@ describe("CompanionDock", () => {
+       />
+     );
+ 
+-    fireEvent.click(screen.getByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "保存哥哥短评" }));
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "这条短评要收入小窝。" }
+     });
+-    fireEvent.click(screen.getByRole("button", { name: "收入烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "收入哥哥短评" }));
+ 
+     expect(onSavePendingComment).toHaveBeenCalledWith("这条短评要收入小窝。");
+   });
+@@ -278,11 +278,11 @@ describe("CompanionDock", () => {
+       />
+     );
+ 
+-    fireEvent.click(screen.getByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "保存哥哥短评" }));
+ 
+     expect(screen.getByTestId("companion-dock")).toHaveClass("draft-open");
+     expect(screen.getByLabelText("短评内容")).toBeInTheDocument();
+-    expect(screen.getByRole("button", { name: "收入烁构短评" })).toBeInTheDocument();
++    expect(screen.getByRole("button", { name: "收入哥哥短评" })).toBeInTheDocument();
+   });
+   it("keeps the draft panel open when a saved draft is replaced", () => {
+     const { rerender } = render(
+@@ -304,7 +304,7 @@ describe("CompanionDock", () => {
+       />
+     );
+ 
+-    fireEvent.click(screen.getByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "保存哥哥短评" }));
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "刚贴进来的短评。" }
+     });
+@@ -330,7 +330,7 @@ describe("CompanionDock", () => {
+ 
+     expect(screen.getByTestId("companion-dock")).toHaveClass("draft-open");
+     expect(screen.getByLabelText("短评内容")).toHaveValue("");
+-    expect(screen.getByRole("button", { name: "收入烁构短评" })).toBeInTheDocument();
++    expect(screen.getByRole("button", { name: "收入哥哥短评" })).toBeInTheDocument();
+   });
+   it("does not close the draft panel when the host layout revision changes", () => {
+     const draft = {
+@@ -354,7 +354,7 @@ describe("CompanionDock", () => {
+       />
+     );
+ 
+-    fireEvent.click(screen.getByRole("button", { name: "保存烁构短评" }));
++    fireEvent.click(screen.getByRole("button", { name: "保存哥哥短评" }));
+     fireEvent.change(screen.getByLabelText("短评内容"), {
+       target: { value: "布局刷新时别关。" }
+     });
+diff --git a/web/src/components/CompanionDock.tsx b/web/src/components/CompanionDock.tsx
+index 096ac47..1030bd5 100644
+--- a/web/src/components/CompanionDock.tsx
++++ b/web/src/components/CompanionDock.tsx
+@@ -65,7 +65,7 @@ export function CompanionDock(props: {
+         data-testid="companion-dock"
+       >
+         <button type="button" className="companion-tab" onClick={() => setCollapsed(false)}>
+-          烁构陪读
++          哥哥陪读
+         </button>
+       </aside>
+     );
+@@ -87,11 +87,11 @@ export function CompanionDock(props: {
+     <aside
+       className={`companion-dock companion-dock-${props.layout}${expanded ? " expanded" : ""}${draftOpen ? " draft-open" : ""}`}
+       data-testid="companion-dock"
+-      aria-label="烁构陪读短评"
++      aria-label="哥哥陪读短评"
+     >
+       <header className="companion-dock-header">
+         <div>
+-          <strong>烁构陪读</strong>
++          <strong>哥哥陪读</strong>
+           <span>最近短评</span>
+         </div>
+         <div className="companion-dock-controls">
+@@ -105,10 +105,10 @@ export function CompanionDock(props: {
+       </header>
+ 
+       <div className="companion-comment-list">
+-        {props.loading ? <p className="companion-empty">正在看看烁构留下了什么……</p> : null}
++        {props.loading ? <p className="companion-empty">正在看看哥哥留下了什么……</p> : null}
+         {!props.loading && props.error ? <p className="companion-empty">{props.error}</p> : null}
+         {!props.loading && !props.error && visible.length === 0 ? (
+-          <p className="companion-empty">烁构还没留下短评。</p>
++          <p className="companion-empty">哥哥还没留下短评。</p>
+         ) : null}
+         {!props.loading && !props.error
+           ? visible.map((comment) => (
+@@ -136,7 +136,7 @@ export function CompanionDock(props: {
+           <div className="pending-comment-save">
+             {!draftOpen ? (
+               <button type="button" onClick={() => setDraftOpen(true)}>
+-                保存烁构短评
++                保存哥哥短评
+               </button>
+             ) : (
+               <form
+@@ -156,7 +156,7 @@ export function CompanionDock(props: {
+                   />
+                 </label>
+                 <button type="submit" disabled={!draftText.trim() || props.pendingCommentSaving}>
+-                  {props.pendingCommentSaving ? "正在保存…" : "收入烁构短评"}
++                  {props.pendingCommentSaving ? "正在保存…" : "收入哥哥短评"}
+                 </button>
+               </form>
+             )}
+diff --git a/web/src/components/DiaryPreview.tsx b/web/src/components/DiaryPreview.tsx
+index 69174cb..2a64ae9 100644
+--- a/web/src/components/DiaryPreview.tsx
++++ b/web/src/components/DiaryPreview.tsx
+@@ -21,7 +21,7 @@ export function DiaryPreview(props: {
+         <ul>{props.context.quotes.map((item) => <li key={item.id}>{item.content}</li>)}</ul>
+         <h3>吐槽</h3>
+         <ul>{props.context.reactions.map((item) => <li key={item.id}>{item.content}</li>)}</ul>
+-        <button className="action-primary wide-button" onClick={props.onWrite}>请烁构写成小窝日记</button>
++        <button className="action-primary wide-button" onClick={props.onWrite}>请哥哥写成小窝日记</button>
+         <button className="text-button" onClick={props.onClose}>关闭</button>
+       </section>
+     </div>
+diff --git a/web/src/components/ReadingCommentPreferences.test.tsx b/web/src/components/ReadingCommentPreferences.test.tsx
+index c1daf80..fce5a18 100644
+--- a/web/src/components/ReadingCommentPreferences.test.tsx
++++ b/web/src/components/ReadingCommentPreferences.test.tsx
+@@ -28,7 +28,7 @@ describe("ReadingCommentPreferences", () => {
+     ]) {
+       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+     }
+-    expect(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" })).not.toBeChecked();
++    expect(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" })).not.toBeChecked();
+     expect(screen.getByText(/不会保存小说正文、prompt 或完整聊天/)).toBeInTheDocument();
+   });
+ 
+@@ -110,7 +110,7 @@ describe("ReadingCommentPreferences", () => {
+     expect(onQuickAction).toHaveBeenCalledWith("deep_analysis", "long");
+     expect(onQuickAction).toHaveBeenCalledWith("diary_summary", "long");
+ 
+-    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" }));
++    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" }));
+     expect(onChange).toHaveBeenCalledWith({ autoSaveCompanionComments: true });
+   });
+ 
+@@ -134,7 +134,7 @@ describe("ReadingCommentPreferences", () => {
+ 
+     const deepButton = screen.getByRole("button", { name: "认真分析" });
+     fireEvent.click(deepButton);
+-    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" }));
++    fireEvent.click(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" }));
+ 
+     expect(deepButton).toBeEnabled();
+     expect(onChange).toHaveBeenCalledWith({
+@@ -198,7 +198,7 @@ describe("ReadingCommentPreferences", () => {
+       "aria-pressed",
+       "true"
+     );
+-    expect(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" })).toBeChecked();
++    expect(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" })).toBeChecked();
+ 
+     rerender(
+       <ReadingCommentPreferences
+@@ -218,6 +218,6 @@ describe("ReadingCommentPreferences", () => {
+       "aria-pressed",
+       "true"
+     );
+-    expect(screen.getByRole("checkbox", { name: "自动保存烁构陪读短评" })).not.toBeChecked();
++    expect(screen.getByRole("checkbox", { name: "自动保存哥哥陪读短评" })).not.toBeChecked();
+   });
+ });
+diff --git a/web/src/components/ReadingCommentPreferences.tsx b/web/src/components/ReadingCommentPreferences.tsx
+index 9da7b5b..603ecc5 100644
+--- a/web/src/components/ReadingCommentPreferences.tsx
++++ b/web/src/components/ReadingCommentPreferences.tsx
+@@ -118,7 +118,7 @@ export function ReadingCommentPreferences(props: {
+       </div>
+ 
+       <label className="toggle-row comment-save-toggle">
+-        <span>自动保存烁构陪读短评</span>
++        <span>自动保存哥哥陪读短评</span>
+         <input
+           type="checkbox"
+           checked={props.preferences.autoSaveCompanionComments}
+@@ -128,7 +128,7 @@ export function ReadingCommentPreferences(props: {
+         />
+       </label>
+       <p className="privacy-note">
+-        开启后，本书会自动保存烁构的轻量陪读短评，方便以后翻回旧段落查看。不会保存小说正文、prompt 或完整聊天。
++        开启后，本书会自动保存哥哥的轻量陪读短评，方便以后翻回旧段落查看。不会保存小说正文、prompt 或完整聊天。
+       </p>
+     </section>
+   );
+diff --git a/web/src/components/ReadingSyncStatus.tsx b/web/src/components/ReadingSyncStatus.tsx
+index 30e5d4c..3f8e5e4 100644
+--- a/web/src/components/ReadingSyncStatus.tsx
++++ b/web/src/components/ReadingSyncStatus.tsx
+@@ -9,7 +9,7 @@ export function ReadingSyncStatus({ session }: { session: ReadingSession }) {
+   return (
+     <aside className="sync-status" aria-label="陪读同步状态">
+       <span>用户读到：{user.label}</span>
+-      <span>烁构确认读到：{assistant?.label ?? "尚未同步"}</span>
++      <span>哥哥确认读到：{assistant?.label ?? "尚未同步"}</span>
+       {hasGap ? (
+         <span>
+           待补课：第 {pendingStart}–{user.index} {user.kind === "page" ? "页" : "段"}
+diff --git a/web/src/components/SyncChoiceSheet.tsx b/web/src/components/SyncChoiceSheet.tsx
+index b764d57..bc424a4 100644
+--- a/web/src/components/SyncChoiceSheet.tsx
++++ b/web/src/components/SyncChoiceSheet.tsx
+@@ -11,7 +11,7 @@ export function SyncChoiceSheet(props: {
+     <div className="sheet-backdrop">
+       <section className="bottom-sheet sync-sheet" role="dialog" aria-modal="true">
+         <h2>中间有较多剧情，要怎么同步？</h2>
+-        <p>烁构还停在{props.assistantLabel}，你已经读到{props.userLabel}。</p>
++        <p>哥哥还停在{props.assistantLabel}，你已经读到{props.userLabel}。</p>
+         <button className="action-primary" onClick={props.onFull}>
+           完整补课后再陪读（推荐）
+         </button>
+diff --git a/web/src/components/SyncProgressSheet.tsx b/web/src/components/SyncProgressSheet.tsx
+index 77b05b9..85a60a3 100644
+--- a/web/src/components/SyncProgressSheet.tsx
++++ b/web/src/components/SyncProgressSheet.tsx
+@@ -12,14 +12,14 @@ export function SyncProgressSheet(props: {
+   return (
+     <div className="sheet-backdrop">
+       <section className="bottom-sheet sync-sheet" role="dialog" aria-modal="true">
+-        <h2>烁构补课中</h2>
++        <h2>哥哥补课中</h2>
+         <p>
+           已确认：{props.job.confirmedThrough?.label ?? "尚未同步"}
+           {batch ? ` · 当前第 ${batch.rangeStart}–${batch.rangeEnd} ${unit}` : ""}
+         </p>
+         {batch?.status === "sent-awaiting-confirmation" ? (
+           <button className="action-primary" onClick={props.onConfirm}>
+-            我看到烁构回复“已读到第 {batch.rangeEnd} {unit}”，
++            我看到哥哥回复“已读到第 {batch.rangeEnd} {unit}”，
+             {batch.isFinal ? "开始正式陪读" : "发送下一批"}
+           </button>
+         ) : null}
+diff --git a/web/src/features/manga/image-sync.test.ts b/web/src/features/manga/image-sync.test.ts
+index 5ea9a38..96a5847 100644
+--- a/web/src/features/manga/image-sync.test.ts
++++ b/web/src/features/manga/image-sync.test.ts
+@@ -35,7 +35,7 @@ describe("prepareCurrentPageContext", () => {
+       syncMode: "description",
+       pageDescription: "这一页男主在哭。",
+       userNote: "这里好难过。",
+-      warning: "当前环境暂不支持图片同步，可以先用页面描述让烁构共读。"
++      warning: "当前环境暂不支持图片同步，可以先用页面描述让哥哥共读。"
+     });
+   });
+ });
+diff --git a/web/src/features/manga/image-sync.ts b/web/src/features/manga/image-sync.ts
+index e83f698..ae51b6e 100644
+--- a/web/src/features/manga/image-sync.ts
++++ b/web/src/features/manga/image-sync.ts
+@@ -31,6 +31,6 @@ export async function prepareCurrentPageContext(input: {
+     syncMode: "description",
+     ...(input.pageDescription ? { pageDescription: input.pageDescription } : {}),
+     ...(input.userNote ? { userNote: input.userNote } : {}),
+-    warning: "当前环境暂不支持图片同步，可以先用页面描述让烁构共读。"
++    warning: "当前环境暂不支持图片同步，可以先用页面描述让哥哥共读。"
+   };
+ }
+diff --git a/web/src/features/reading-sync/build-messages.test.ts b/web/src/features/reading-sync/build-messages.test.ts
+index 01e1bfb..06840c0 100644
+--- a/web/src/features/reading-sync/build-messages.test.ts
++++ b/web/src/features/reading-sync/build-messages.test.ts
+@@ -38,7 +38,7 @@ describe("reading-sync messages", () => {
+     const message = buildBatchChatMessage(job, batch);
+ 
+     expect(message).toContain("【补课第 1/4 批：第 3–8 段】");
+-    expect(message).toContain("烁构先安静追到用户当前位置");
++    expect(message).toContain("哥哥先安静追到用户当前位置");
+     expect(message).toContain("只简短回复：“已读到第 8 段。”");
+     expect(message).toContain(batch.text);
+     expect(message).not.toMatch(/剧情摘要|关键事件|人物关系/);
+diff --git a/web/src/features/reading-sync/build-messages.ts b/web/src/features/reading-sync/build-messages.ts
+index d6fc26f..643f340 100644
+--- a/web/src/features/reading-sync/build-messages.ts
++++ b/web/src/features/reading-sync/build-messages.ts
+@@ -7,8 +7,8 @@ export function buildBatchChatMessage(job: ReadingSyncJob, batch: SyncBatch) {
+     batchHeader(batch),
+     "",
+     "这是 skipped range 分批补课，不是正式点评。",
+-    `用户当前已读到${job.targetPosition.label}，烁构上次确认读到${confirmedLabel(job)}。`,
+-    "这是补课批次。烁构先安静追到用户当前位置，不展开评论。",
++    `用户当前已读到${job.targetPosition.label}，哥哥上次确认读到${confirmedLabel(job)}。`,
++    "这是补课批次。哥哥先安静追到用户当前位置，不展开评论。",
+     `只简短回复：“已读到第 ${batch.rangeEnd} 段。”`,
+     "",
+     batch.text
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+index 2c30640..07f3d06 100644
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -15,6 +15,6 @@ if (rootElement) {
+ } else {
+   document.body.insertAdjacentHTML(
+     "afterbegin",
+-    '<main class="boot-diagnostics" role="alert"><strong>SxS reading nest startup</strong><p>Missing app root. Please refresh the widget.</p><dl><div><dt>resourceVersion</dt><dd>app-v19</dd></div><div><dt>bootStage</dt><dd>missing-root</dd></div></dl></main>'
++    '<main class="boot-diagnostics" role="alert"><strong>xkk reading nest startup</strong><p>Missing app root. Please refresh the widget.</p><dl><div><dt>resourceVersion</dt><dd>app-v19</dd></div><div><dt>bootStage</dt><dd>missing-root</dd></div></dl></main>'
+   );
+ }
+diff --git a/web/src/pages/Home.test.tsx b/web/src/pages/Home.test.tsx
+index 0c11755..d8c54b8 100644
+--- a/web/src/pages/Home.test.tsx
++++ b/web/src/pages/Home.test.tsx
+@@ -23,7 +23,7 @@ describe("Home bookshelf core", () => {
+     expect(screen.getAllByText("阅读中").length).toBeGreaterThan(0);
+     expect(screen.getAllByText("已完成").length).toBeGreaterThan(0);
+     expect(screen.getByText("用户：第 8 段")).toBeInTheDocument();
+-    expect(screen.getByText("烁构：第 6 段")).toBeInTheDocument();
++    expect(screen.getByText("哥哥：第 6 段")).toBeInTheDocument();
+     expect(screen.getAllByText("轻松聊聊").length).toBeGreaterThan(0);
+     expect(screen.getByText(/这里像伏笔/)).toBeInTheDocument();
+   });
+diff --git a/web/src/pages/Home.tsx b/web/src/pages/Home.tsx
+index e0b4794..f14a426 100644
+--- a/web/src/pages/Home.tsx
++++ b/web/src/pages/Home.tsx
+@@ -58,9 +58,9 @@ export function Home(props: {
+   return (
+     <main className="home-shell">
+       <section className="home-hero">
+-        <div className="nest-mark">S×S</div>
+-        <h1>S×S 小窝共读</h1>
+-        <p>晚上好，今天想一起看什么？</p>
++        <div className="nest-mark">xkk</div>
++        <h1>xkk读到哪了</h1>
++        <p>晚上好，小猫。今天想和哥哥一起看什么？</p>
+       </section>
+ 
+       <section className="mode-grid" aria-label="共读模式">
+@@ -144,7 +144,7 @@ function BookCard(props: {
+       </div>
+       <div className="book-progress">
+         <span>用户：{item.session.userCurrentPosition.label}</span>
+-        <span>烁构：{item.session.assistantSyncedPosition?.label ?? "尚未同步"}</span>
++        <span>哥哥：{item.session.assistantSyncedPosition?.label ?? "尚未同步"}</span>
+         <span>{MODE_LABELS[item.session.sessionPreferences.readingCommentMode]}</span>
+       </div>
+       <div className={`book-source ${item.sourceAvailability}`}>
+@@ -152,7 +152,7 @@ function BookCard(props: {
+         <span>{action.hint}</span>
+       </div>
+       <p className="book-comment">
+-        {item.latestComment ? `烁构：${item.latestComment}` : "烁构还没留下短评。"}
++        {item.latestComment ? `哥哥：${item.latestComment}` : "哥哥还没留下短评。"}
+       </p>
+       <button
+         type="button"
+diff --git a/web/src/pages/MangaReader.test.tsx b/web/src/pages/MangaReader.test.tsx
+index 553c7f7..f76124a 100644
+--- a/web/src/pages/MangaReader.test.tsx
++++ b/web/src/pages/MangaReader.test.tsx
+@@ -54,7 +54,7 @@ describe("MangaReader v0.2 positions", () => {
+     );
+ 
+     expect(screen.getByText("用户读到：第 2 页")).toBeInTheDocument();
+-    expect(screen.getByText("烁构确认读到：第 1 页")).toBeInTheDocument();
++    expect(screen.getByText("哥哥确认读到：第 1 页")).toBeInTheDocument();
+     expect(screen.getByText(/待补课：第 2–2 页/)).toBeInTheDocument();
+ 
+     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+diff --git a/web/src/pages/MangaReader.tsx b/web/src/pages/MangaReader.tsx
+index 06da839..0cc48e3 100644
+--- a/web/src/pages/MangaReader.tsx
++++ b/web/src/pages/MangaReader.tsx
+@@ -96,7 +96,7 @@ export function MangaReader(props: {
+               <textarea value={props.description} onChange={(event) => props.onDescription(event.target.value)} placeholder="例如：这一页男主在哭" />
+             </label>
+             <label>
+-              想和烁构说
++              想和哥哥说
+               <input value={props.note} onChange={(event) => props.onNote(event.target.value)} placeholder="写一句备注或吐槽" />
+             </label>
+           </div>
+diff --git a/web/src/styles/app.css b/web/src/styles/app.css
+index 5f4f514..1c02447 100644
+--- a/web/src/styles/app.css
++++ b/web/src/styles/app.css
+@@ -73,7 +73,8 @@ button:disabled { cursor: default; opacity: .42; }
+   color: white;
+   background: var(--wood);
+   font-weight: 850;
+-  letter-spacing: -.04em;
++  letter-spacing: -.02em;
++  text-transform: lowercase;
+   box-shadow: var(--shadow);
+ }
+ h1, h2, h3, p { margin-top: 0; }
